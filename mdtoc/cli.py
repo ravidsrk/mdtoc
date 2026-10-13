@@ -33,7 +33,10 @@ def build_parser():
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.max_depth is not None and args.max_depth < 1:
+        parser.error("--max-depth must be at least 1")
     status = 0
     for name in args.files:
         try:
@@ -43,5 +46,5 @@ def main(argv=None):
             status = 2
             continue
         if args.stdout:
-            sys.stdout.write(render_toc(text, max_level=args.max_depth or DEFAULT_MAX_LEVEL))
+            sys.stdout.write(render_toc(text, max_level=DEFAULT_MAX_LEVEL if args.max_depth is None else args.max_depth))
     return status

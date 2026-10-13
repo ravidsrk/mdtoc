@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mdtoc.toc import github_slug, render_toc, scan_headings, slugify_all
+from mdtoc.toc import Heading, github_slug, render_toc, scan_headings, slugify_all
 
 
 class SlugTests(unittest.TestCase):
@@ -22,6 +22,15 @@ class SlugTests(unittest.TestCase):
 
     def test_duplicates_get_suffixes_in_order(self):
         self.assertEqual(slugify_all(["A", "B", "A", "A", "B"]), ["a", "b", "a-1", "a-2", "b-1"])
+
+    def test_generated_suffix_checked_against_taken_slugs(self):
+        self.assertEqual(slugify_all(["A", "A", "A-1", "A"]), ["a", "a-1", "a-1-1", "a-2"])
+
+    def test_inline_markup_stripped_before_slugging(self):
+        self.assertEqual(
+            slugify_all(["**Bold** [l](u)", "`code` and ![img](p.png)", "*em* _it_ __st__", "snake_case_"]),
+            ["bold-l", "code-and-img", "em-it-st", "snake_case_"],
+        )
 
 
 class ScanTests(unittest.TestCase):
@@ -47,6 +56,16 @@ class ScanTests(unittest.TestCase):
     def test_unclosed_fence_swallows_rest(self):
         self.assertEqual([h.text for h in scan_headings("# A\n```\n# B\n")], ["A"])
 
+    def test_fence_on_list_item_line_excluded(self):
+        self.assertEqual(scan_headings("- ```\n  # x\n  ```\n# y\n"), [Heading(1, "y")])
+
+    def test_fence_on_numbered_and_nested_list_item_line_excluded(self):
+        self.assertEqual(scan_headings("1. ~~~\n   # x\n   ~~~\n"), [])
+        self.assertEqual(scan_headings("- - ```\n  # x\n"), [])
+
+    def test_fence_on_own_line_inside_list_excluded(self):
+        self.assertEqual(scan_headings("- item\n  ```\n  # x\n  ```\n"), [])
+
 
 class RenderTests(unittest.TestCase):
     def test_nested_list_with_duplicate_slugs(self):
@@ -67,6 +86,13 @@ class RenderTests(unittest.TestCase):
     def test_max_depth(self):
         self.assertEqual(render_toc("## B\n### C\n", max_level=2), "- [B](#b)\n")
 
+    def test_markup_heading_keeps_visible_text_but_plain_slug(self):
+        self.assertEqual(render_toc("## **Bold** [l](u)\n"), "- [**Bold** [l](u)](#bold-l)\n")
+
+    def test_empty_heading_not_rendered_but_consumes_slot(self):
+        self.assertEqual(render_toc("## \n## b\n"), "- [b](#b)\n")
+        self.assertEqual(render_toc("## \n## \n## x\n"), "- [x](#x)\n")
+
 
 class StdoutTests(unittest.TestCase):
     def test_stdout_prints_toc_and_does_not_write(self):
@@ -82,6 +108,15 @@ class StdoutTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "- [One](#one)\n- [One](#one-1)\n")
             self.assertEqual(path.read_text(encoding="utf-8"), src)
+
+    def test_max_depth_zero_is_argument_error(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "mdtoc", "--stdout", "--max-depth", "0", "x.md"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("max-depth", result.stderr)
 
 
 if __name__ == "__main__":
