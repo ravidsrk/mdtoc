@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from mdtoc import __version__
-from mdtoc.toc import DEFAULT_MAX_LEVEL, render_toc, update_text
+from mdtoc.toc import DEFAULT_MAX_LEVEL, update_text
 
 
 def _depth(value):
@@ -45,6 +45,8 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.check and args.stdout:
+        parser.error("--check and --stdout cannot be combined")
     max_level = DEFAULT_MAX_LEVEL if args.max_depth is None else args.max_depth
     status = 0
     for name in args.files:
@@ -57,7 +59,7 @@ def main(argv=None):
                     print(f"mdtoc: {name}: table of contents is stale or missing", file=sys.stderr)
                     status = max(status, 1)
             elif args.stdout:
-                sys.stdout.write(render_toc(text, max_level=max_level))
+                sys.stdout.write(update_text(text, max_level=max_level))
             else:
                 new = update_text(text, max_level=max_level)
                 if new != text:

@@ -21,8 +21,8 @@ class Heading(NamedTuple):
     text: str
 
 
-def _scan(text):
-    """Yield (line_index, Heading) for ATX headings, skipping fenced code blocks."""
+def _outside_fences(text):
+    """Yield (line_index, line) for lines that are not fenced code or fence delimiters."""
     fence = None
     for index, line in enumerate(text.splitlines()):
         m = _FENCE.match(line) or (_LIST_FENCE.match(line) if fence is None else None)
@@ -39,6 +39,12 @@ def _scan(text):
             ):
                 fence = None
             continue
+        yield index, line
+
+
+def _scan(text):
+    """Yield (line_index, Heading) for ATX headings, skipping fenced code blocks."""
+    for index, line in _outside_fences(text):
         h = _HEADING.match(line)
         if h:
             yield index, Heading(len(h.group(1)), (h.group(2) or "").strip())
@@ -87,21 +93,42 @@ def render_toc(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
     )
 
 
-_MARKED = re.compile(re.escape(OPEN_MARKER) + r"(.*?)" + re.escape(CLOSE_MARKER), re.DOTALL)
+def _marker_region(text):
+    """Return (start, end) of the one marker pair outside fences, or None if there is none.
+
+    Raises ValueError for any other marker state outside fences.
+    """
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    hits = []
+    for index, line in _outside_fences(text):
+        for marker in (OPEN_MARKER, CLOSE_MARKER):
+            at = line.find(marker)
+            while at != -1:
+                hits.append((starts[index] + at, marker))
+                at = line.find(marker, at + len(marker))
+    hits.sort()
+    if not hits:
+        return None
+    if [m for _, m in hits] != [OPEN_MARKER, CLOSE_MARKER]:
+        raise ValueError(f"expected exactly one {OPEN_MARKER} / {CLOSE_MARKER} marker pair")
+    return hits[0][0], hits[1][0] + len(CLOSE_MARKER)
 
 
 def update_text(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
     """Return text with its TOC block inserted or refreshed; all else is untouched.
 
-    Raises ValueError if the markers are unbalanced.
+    Markers inside fenced code blocks are ignored. Raises ValueError unless there are
+    no markers or exactly one open/close pair outside fences.
     """
     eol = "\r\n" if "\r\n" in text else "\n"
     toc = render_toc(text, min_level, max_level).replace("\n", eol)
     inner = eol + toc
-    if _MARKED.search(text):
-        return _MARKED.sub(lambda m: OPEN_MARKER + inner + CLOSE_MARKER, text, count=1)
-    if OPEN_MARKER in text or CLOSE_MARKER in text:
-        raise ValueError(f"unbalanced {OPEN_MARKER} / {CLOSE_MARKER} markers")
+    region = _marker_region(text)
+    if region:
+        start, end = region
+        return text[:start] + OPEN_MARKER + inner + CLOSE_MARKER + text[end:]
     block = OPEN_MARKER + inner + CLOSE_MARKER + eol
     h1 = next((i for i, h in _scan(text) if h.level == 1), None)
     if h1 is None:

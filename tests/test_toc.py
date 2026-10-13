@@ -95,7 +95,7 @@ class RenderTests(unittest.TestCase):
 
 
 class StdoutTests(unittest.TestCase):
-    def test_stdout_prints_toc_and_does_not_write(self):
+    def test_stdout_prints_updated_document_and_does_not_write(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "a.md"
             src = "# T\n## One\n```\n## no\n```\n## One\n"
@@ -106,7 +106,11 @@ class StdoutTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, "- [One](#one)\n- [One](#one-1)\n")
+            self.assertEqual(
+                result.stdout,
+                "# T\n\n<!-- toc -->\n- [One](#one)\n- [One](#one-1)\n<!-- /toc -->\n\n"
+                "## One\n```\n## no\n```\n## One\n",
+            )
             self.assertEqual(path.read_text(encoding="utf-8"), src)
 
     def test_max_depth_zero_is_argument_error(self):
