@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from mdtoc import __version__
+from mdtoc.toc import DEFAULT_MAX_LEVEL, render_toc
 
 
 def build_parser():
@@ -36,8 +37,11 @@ def main(argv=None):
     status = 0
     for name in args.files:
         try:
-            Path(name).read_text(encoding="utf-8")
+            text = Path(name).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             print(f"mdtoc: {name}: {exc}", file=sys.stderr)
             status = 2
+            continue
+        if args.stdout:
+            sys.stdout.write(render_toc(text, max_level=args.max_depth or DEFAULT_MAX_LEVEL))
     return status
