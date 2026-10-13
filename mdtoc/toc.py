@@ -3,6 +3,8 @@ from typing import NamedTuple
 
 DEFAULT_MIN_LEVEL = 2
 DEFAULT_MAX_LEVEL = 4
+OPEN_MARKER = "<!-- toc -->"
+CLOSE_MARKER = "<!-- /toc -->"
 
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _LIST_FENCE = re.compile(r"^ {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)+(`{3,}|~{3,})(.*)$")
@@ -19,11 +21,10 @@ class Heading(NamedTuple):
     text: str
 
 
-def scan_headings(text):
-    """Return ATX headings in document order, skipping fenced code blocks."""
-    headings = []
+def _outside_fences(text):
+    """Yield (line_index, line) for lines that are not fenced code or fence delimiters."""
     fence = None
-    for line in text.splitlines():
+    for index, line in enumerate(text.splitlines()):
         m = _FENCE.match(line) or (_LIST_FENCE.match(line) if fence is None else None)
         if fence is None:
             if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
@@ -38,10 +39,20 @@ def scan_headings(text):
             ):
                 fence = None
             continue
+        yield index, line
+
+
+def _scan(text):
+    """Yield (line_index, Heading) for ATX headings, skipping fenced code blocks."""
+    for index, line in _outside_fences(text):
         h = _HEADING.match(line)
         if h:
-            headings.append(Heading(len(h.group(1)), (h.group(2) or "").strip()))
-    return headings
+            yield index, Heading(len(h.group(1)), (h.group(2) or "").strip())
+
+
+def scan_headings(text):
+    """Return ATX headings in document order, skipping fenced code blocks."""
+    return [h for _, h in _scan(text)]
 
 
 def plain_text(text):
@@ -80,3 +91,56 @@ def render_toc(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
         for h, slug in zip(headings, slugs)
         if h.text and min_level <= h.level <= max_level
     )
+
+
+def _marker_region(text):
+    """Return (start, end) of the one marker pair outside fences, or None if there is none.
+
+    Raises ValueError for any other marker state outside fences.
+    """
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    hits = []
+    for index, line in _outside_fences(text):
+        for marker in (OPEN_MARKER, CLOSE_MARKER):
+            at = line.find(marker)
+            while at != -1:
+                hits.append((starts[index] + at, marker))
+                at = line.find(marker, at + len(marker))
+    hits.sort()
+    if not hits:
+        return None
+    if [m for _, m in hits] != [OPEN_MARKER, CLOSE_MARKER]:
+        raise ValueError(f"expected exactly one {OPEN_MARKER} / {CLOSE_MARKER} marker pair")
+    return hits[0][0], hits[1][0] + len(CLOSE_MARKER)
+
+
+def update_text(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
+    """Return text with its TOC block inserted or refreshed; all else is untouched.
+
+    Markers inside fenced code blocks are ignored. Raises ValueError unless there are
+    no markers or exactly one open/close pair outside fences.
+    """
+    eol = "\r\n" if "\r\n" in text else "\n"
+    toc = render_toc(text, min_level, max_level).replace("\n", eol)
+    inner = eol + toc
+    region = _marker_region(text)
+    if region:
+        start, end = region
+        return text[:start] + OPEN_MARKER + inner + CLOSE_MARKER + text[end:]
+    block = OPEN_MARKER + inner + CLOSE_MARKER + eol
+    h1 = next((i for i, h in _scan(text) if h.level == 1), None)
+    if h1 is None:
+        head, rest = "", text
+    else:
+        lines = text.splitlines(keepends=True)
+        head, rest = "".join(lines[: h1 + 1]), "".join(lines[h1 + 1 :])
+        if not head.endswith(("\n", "\r")):
+            head += eol
+        head += eol
+    if rest and not rest.startswith(("\n", "\r")):
+        block += eol
+    elif h1 is None and rest:
+        block += eol
+    return head + block + rest

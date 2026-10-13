@@ -3,7 +3,17 @@ import sys
 from pathlib import Path
 
 from mdtoc import __version__
-from mdtoc.toc import DEFAULT_MAX_LEVEL, render_toc
+from mdtoc.toc import DEFAULT_MAX_LEVEL, update_text
+
+
+def _depth(value):
+    try:
+        depth = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if not 1 <= depth <= 6:
+        raise argparse.ArgumentTypeError(f"must be between 1 and 6, got {depth}")
+    return depth
 
 
 def build_parser():
@@ -24,7 +34,7 @@ def build_parser():
     )
     parser.add_argument(
         "--max-depth",
-        type=int,
+        type=_depth,
         metavar="N",
         help="deepest heading level to include",
     )
@@ -35,16 +45,27 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.max_depth is not None and args.max_depth < 1:
-        parser.error("--max-depth must be at least 1")
+    if args.check and args.stdout:
+        parser.error("--check and --stdout cannot be combined")
+    max_level = DEFAULT_MAX_LEVEL if args.max_depth is None else args.max_depth
     status = 0
     for name in args.files:
+        path = Path(name)
         try:
-            text = Path(name).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
+            with open(path, encoding="utf-8", newline="") as f:
+                text = f.read()
+            if args.check:
+                if update_text(text, max_level=max_level) != text:
+                    print(f"mdtoc: {name}: table of contents is stale or missing", file=sys.stderr)
+                    status = max(status, 1)
+            elif args.stdout:
+                sys.stdout.write(update_text(text, max_level=max_level))
+            else:
+                new = update_text(text, max_level=max_level)
+                if new != text:
+                    with open(path, "w", encoding="utf-8", newline="") as f:
+                        f.write(new)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
             print(f"mdtoc: {name}: {exc}", file=sys.stderr)
             status = 2
-            continue
-        if args.stdout:
-            sys.stdout.write(render_toc(text, max_level=DEFAULT_MAX_LEVEL if args.max_depth is None else args.max_depth))
     return status
