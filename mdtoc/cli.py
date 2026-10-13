@@ -65,7 +65,13 @@ def main(argv=None):
                 if new != text:
                     with open(path, "w", encoding="utf-8", newline="") as f:
                         f.write(new)
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            print(f"mdtoc: {name}: {exc}", file=sys.stderr)
+        except FileNotFoundError:
+            print(f"mdtoc: {name}: no such file", file=sys.stderr)
+            status = 2
+        except UnicodeDecodeError:
+            print(f"mdtoc: {name}: not valid UTF-8", file=sys.stderr)
+            status = 2
+        except (OSError, ValueError) as exc:
+            print(f"mdtoc: {name}: {exc.strerror or exc}" if isinstance(exc, OSError) else f"mdtoc: {name}: {exc}", file=sys.stderr)
             status = 2
     return status
