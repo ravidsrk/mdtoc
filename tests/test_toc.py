@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mdtoc.toc import Heading, github_slug, render_toc, scan_headings, slugify_all
+from mdtoc.toc import Heading, github_slug, plain_text, render_toc, scan_headings, slugify_all
 
 
 class SlugTests(unittest.TestCase):
@@ -31,6 +31,60 @@ class SlugTests(unittest.TestCase):
             slugify_all(["**Bold** [l](u)", "`code` and ![img](p.png)", "*em* _it_ __st__", "snake_case_"]),
             ["bold-l", "code-and-img", "em-it-st", "snake_case_"],
         )
+
+
+class RenderedTextTests(unittest.TestCase):
+    def test_nested_link_resolved_innermost_first(self):
+        self.assertEqual(plain_text("See [outer [inner](http://x)](http://y)"), "See outer inner")
+        self.assertEqual(slugify_all(["[See [inner](http://x)](http://y)"]), ["see-inner"])
+
+    def test_nested_image_in_link(self):
+        self.assertEqual(slugify_all(["[![alt](p.png)](http://y)"]), ["alt"])
+
+    def test_inline_html_tags_stripped(self):
+        self.assertEqual(plain_text("Hello <em>World</em>"), "Hello World")
+        self.assertEqual(slugify_all(["Hello <em>World</em>"]), ["hello-world"])
+
+    def test_tag_inside_code_span_is_literal(self):
+        self.assertEqual(plain_text("Use `<div>` here"), "Use <div> here")
+        self.assertEqual(slugify_all(["Use `<div>` here"]), ["use-div-here"])
+
+    def test_link_syntax_and_emphasis_inside_code_span_literal(self):
+        self.assertEqual(plain_text("`[a](b)` `x*y*`"), "[a](b) x*y*")
+
+    def test_decomposed_accent_keeps_combining_mark(self):
+        self.assertEqual(github_slug("Cafe\u0301"), "cafe\u0301")
+        self.assertEqual(slugify_all(["Cafe\u0301"]), ["cafe\u0301"])
+
+    def test_precomposed_accent_unchanged(self):
+        self.assertEqual(github_slug("Caf\u00e9"), "caf\u00e9")
+        self.assertEqual(slugify_all(["Caf\u00e9"]), ["caf\u00e9"])
+
+    def test_url_autolink_is_text_not_tag(self):
+        self.assertEqual(plain_text("<http://example.com>"), "http://example.com")
+        self.assertEqual(slugify_all(["<http://example.com>"]), ["httpexamplecom"])
+        self.assertEqual(plain_text("<https://example.com/a?b=1>"), "https://example.com/a?b=1")
+        self.assertEqual(plain_text("<mailto:a@b.c>"), "mailto:a@b.c")
+
+    def test_autolink_mixed_with_text_and_tags(self):
+        self.assertEqual(plain_text("See <http://x.io> and <em>more</em>"), "See http://x.io and more")
+
+    def test_email_autolink(self):
+        self.assertEqual(plain_text("<a@b.c>"), "a@b.c")
+        self.assertEqual(slugify_all(["<a@b.c>"]), ["abc"])
+
+    def test_div_still_stripped_and_code_span_literal(self):
+        self.assertEqual(plain_text("<div>x</div>"), "x")
+        self.assertEqual(plain_text("`<span>` <http://x.io>"), "<span> http://x.io")
+
+    def test_autolink_heading_stays_in_toc(self):
+        self.assertEqual(
+            render_toc("## <http://example.com>\n"),
+            "- [http://example.com](#httpexamplecom)\n",
+        )
+
+    def test_slug_keep_set(self):
+        self.assertEqual(github_slug("a\u2460 b\u00b2 c\u2014d $e +f"), "a\u2460-b\u00b2-cd-e-f")
 
 
 class ScanTests(unittest.TestCase):
@@ -79,6 +133,12 @@ class RenderTests(unittest.TestCase):
         text = "# A\n## A\n"
         self.assertEqual(render_toc(text), "- [A](#a-1)\n")
 
+    def test_duplicate_suffix_counts_depth_filtered_headings(self):
+        self.assertEqual(
+            render_toc("## A\n### A\n## A\n", max_level=2),
+            "- [A](#a)\n- [A](#a-2)\n",
+        )
+
     def test_default_depth_h2_to_h4(self):
         text = "# T\n## B\n#### D\n##### E\n"
         self.assertEqual(render_toc(text), "- [B](#b)\n    - [D](#d)\n")
@@ -86,8 +146,20 @@ class RenderTests(unittest.TestCase):
     def test_max_depth(self):
         self.assertEqual(render_toc("## B\n### C\n", max_level=2), "- [B](#b)\n")
 
-    def test_markup_heading_keeps_visible_text_but_plain_slug(self):
-        self.assertEqual(render_toc("## **Bold** [l](u)\n"), "- [**Bold** [l](u)](#bold-l)\n")
+    def test_markup_heading_label_and_slug_share_rendered_text(self):
+        self.assertEqual(render_toc("## **Bold** [l](u)\n"), "- [Bold l](#bold-l)\n")
+
+    def test_label_nested_link_and_html(self):
+        self.assertEqual(
+            render_toc("## [See [inner](http://x)](http://y)\n## Hello <em>World</em>\n"),
+            "- [See inner](#see-inner)\n- [Hello World](#hello-world)\n",
+        )
+
+    def test_label_keeps_tag_in_code_span(self):
+        self.assertEqual(render_toc("## Use `<div>` here\n"), "- [Use <div> here](#use-div-here)\n")
+
+    def test_heading_with_empty_rendered_text_omitted(self):
+        self.assertEqual(render_toc("## <br>\n## ![](p.png)\n## x\n"), "- [x](#x)\n")
 
     def test_empty_heading_not_rendered_but_consumes_slot(self):
         self.assertEqual(render_toc("## \n## b\n"), "- [b](#b)\n")
