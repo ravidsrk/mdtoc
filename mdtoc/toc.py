@@ -21,6 +21,20 @@ _STAR_EMPHASIS = re.compile(r"\*+")
 _UNDERSCORE_EMPHASIS = re.compile(r"(?<!\w)(_{1,3})(?=\S)(.+?)(?<=\S)\1(?!\w)")
 
 
+_EOL = re.compile(r"\r\n|\r|\n")
+_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+")
+BOM = "\ufeff"
+
+
+def _lines(text):
+    """Split on CRLF, CR, LF only, keeping terminators."""
+    return _LINE.findall(text)
+
+
+def _strip_bom(text):
+    return text[1:] if text.startswith(BOM) else text
+
+
 class Heading(NamedTuple):
     level: int
     text: str
@@ -29,7 +43,7 @@ class Heading(NamedTuple):
 def _outside_fences(text):
     """Yield (line_index, line) for lines that are not fenced code or fence delimiters."""
     fence = None
-    for index, line in enumerate(text.splitlines()):
+    for index, line in enumerate(_EOL.split(text)):
         m = _FENCE.match(line) or (_LIST_FENCE.match(line) if fence is None else None)
         if fence is None:
             if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
@@ -49,7 +63,7 @@ def _outside_fences(text):
 
 def _scan(text):
     """Yield (line_index, Heading) for ATX headings, skipping fenced code blocks."""
-    for index, line in _outside_fences(text):
+    for index, line in _outside_fences(_strip_bom(text)):
         h = _HEADING.match(line)
         if h:
             yield index, Heading(len(h.group(1)), (h.group(2) or "").strip())
@@ -112,11 +126,13 @@ def render_toc(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
     headings = scan_headings(text)
     labels = [plain_text(h.text) for h in headings]
     slugs = slugify_all(h.text for h in headings)
-    return "".join(
-        f"{'  ' * (h.level - min_level)}- [{label}](#{slug})\n"
+    items = [
+        (h.level, label, slug)
         for h, label, slug in zip(headings, labels, slugs)
         if label and min_level <= h.level <= max_level
-    )
+    ]
+    base = min((level for level, _, _ in items), default=min_level)
+    return "".join(f"{'  ' * (level - base)}- [{label}](#{slug})\n" for level, label, slug in items)
 
 
 def _marker_region(text):
@@ -125,7 +141,7 @@ def _marker_region(text):
     Raises ValueError for any other marker state outside fences.
     """
     starts = [0]
-    for line in text.splitlines(keepends=True):
+    for line in _lines(text):
         starts.append(starts[-1] + len(line))
     hits = []
     for index, line in _outside_fences(text):
@@ -148,7 +164,10 @@ def update_text(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
     Markers inside fenced code blocks are ignored. Raises ValueError unless there are
     no markers or exactly one open/close pair outside fences.
     """
-    eol = "\r\n" if "\r\n" in text else "\n"
+    if text.startswith(BOM):
+        return BOM + update_text(text[1:], min_level, max_level)
+    first = _EOL.search(text)
+    eol = first.group() if first else "\n"
     toc = render_toc(text, min_level, max_level).replace("\n", eol)
     inner = eol + toc
     region = _marker_region(text)
@@ -160,7 +179,7 @@ def update_text(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
     if h1 is None:
         head, rest = "", text
     else:
-        lines = text.splitlines(keepends=True)
+        lines = _lines(text)
         head, rest = "".join(lines[: h1 + 1]), "".join(lines[h1 + 1 :])
         if not head.endswith(("\n", "\r")):
             head += eol
