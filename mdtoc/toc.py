@@ -3,6 +3,8 @@ from typing import NamedTuple
 
 DEFAULT_MIN_LEVEL = 2
 DEFAULT_MAX_LEVEL = 4
+OPEN_MARKER = "<!-- toc -->"
+CLOSE_MARKER = "<!-- /toc -->"
 
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _LIST_FENCE = re.compile(r"^ {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)+(`{3,}|~{3,})(.*)$")
@@ -19,11 +21,10 @@ class Heading(NamedTuple):
     text: str
 
 
-def scan_headings(text):
-    """Return ATX headings in document order, skipping fenced code blocks."""
-    headings = []
+def _scan(text):
+    """Yield (line_index, Heading) for ATX headings, skipping fenced code blocks."""
     fence = None
-    for line in text.splitlines():
+    for index, line in enumerate(text.splitlines()):
         m = _FENCE.match(line) or (_LIST_FENCE.match(line) if fence is None else None)
         if fence is None:
             if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
@@ -40,8 +41,12 @@ def scan_headings(text):
             continue
         h = _HEADING.match(line)
         if h:
-            headings.append(Heading(len(h.group(1)), (h.group(2) or "").strip()))
-    return headings
+            yield index, Heading(len(h.group(1)), (h.group(2) or "").strip())
+
+
+def scan_headings(text):
+    """Return ATX headings in document order, skipping fenced code blocks."""
+    return [h for _, h in _scan(text)]
 
 
 def plain_text(text):
@@ -80,3 +85,35 @@ def render_toc(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
         for h, slug in zip(headings, slugs)
         if h.text and min_level <= h.level <= max_level
     )
+
+
+_MARKED = re.compile(re.escape(OPEN_MARKER) + r"(.*?)" + re.escape(CLOSE_MARKER), re.DOTALL)
+
+
+def update_text(text, min_level=DEFAULT_MIN_LEVEL, max_level=DEFAULT_MAX_LEVEL):
+    """Return text with its TOC block inserted or refreshed; all else is untouched.
+
+    Raises ValueError if the markers are unbalanced.
+    """
+    eol = "\r\n" if "\r\n" in text else "\n"
+    toc = render_toc(text, min_level, max_level).replace("\n", eol)
+    inner = eol + toc
+    if _MARKED.search(text):
+        return _MARKED.sub(lambda m: OPEN_MARKER + inner + CLOSE_MARKER, text, count=1)
+    if OPEN_MARKER in text or CLOSE_MARKER in text:
+        raise ValueError(f"unbalanced {OPEN_MARKER} / {CLOSE_MARKER} markers")
+    block = OPEN_MARKER + inner + CLOSE_MARKER + eol
+    h1 = next((i for i, h in _scan(text) if h.level == 1), None)
+    if h1 is None:
+        head, rest = "", text
+    else:
+        lines = text.splitlines(keepends=True)
+        head, rest = "".join(lines[: h1 + 1]), "".join(lines[h1 + 1 :])
+        if not head.endswith(("\n", "\r")):
+            head += eol
+        head += eol
+    if rest and not rest.startswith(("\n", "\r")):
+        block += eol
+    elif h1 is None and rest:
+        block += eol
+    return head + block + rest
