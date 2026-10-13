@@ -11,6 +11,9 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _LIST_FENCE = re.compile(r"^ {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)+(`{3,}|~{3,})(.*)$")
 _HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _IMAGE_OR_LINK = re.compile(r"!?\[([^\[\]]*)\]\([^)]*\)")
+_AUTOLINK = re.compile(
+    r"<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+)>"
+)
 _HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>|<!--.*?-->")
 _SENTINEL = re.compile("\ue000(\\d+)\ue001")
 _CODE_SPAN = re.compile(r"(`+)(.+?)\1")
@@ -73,6 +76,7 @@ def plain_text(text):
     while previous != text:
         previous = text
         text = _IMAGE_OR_LINK.sub(lambda m: m.group(1), text)
+    text = _AUTOLINK.sub(lambda m: m.group(1), text)
     text = _HTML_TAG.sub("", text)
     text = _STAR_EMPHASIS.sub("", text)
     text = _UNDERSCORE_EMPHASIS.sub(lambda m: m.group(2), text)

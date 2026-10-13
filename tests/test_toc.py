@@ -56,6 +56,33 @@ class RenderedTextTests(unittest.TestCase):
         self.assertEqual(github_slug("Cafe\u0301"), "cafe\u0301")
         self.assertEqual(slugify_all(["Cafe\u0301"]), ["cafe\u0301"])
 
+    def test_precomposed_accent_unchanged(self):
+        self.assertEqual(github_slug("Caf\u00e9"), "caf\u00e9")
+        self.assertEqual(slugify_all(["Caf\u00e9"]), ["caf\u00e9"])
+
+    def test_url_autolink_is_text_not_tag(self):
+        self.assertEqual(plain_text("<http://example.com>"), "http://example.com")
+        self.assertEqual(slugify_all(["<http://example.com>"]), ["httpexamplecom"])
+        self.assertEqual(plain_text("<https://example.com/a?b=1>"), "https://example.com/a?b=1")
+        self.assertEqual(plain_text("<mailto:a@b.c>"), "mailto:a@b.c")
+
+    def test_autolink_mixed_with_text_and_tags(self):
+        self.assertEqual(plain_text("See <http://x.io> and <em>more</em>"), "See http://x.io and more")
+
+    def test_email_autolink(self):
+        self.assertEqual(plain_text("<a@b.c>"), "a@b.c")
+        self.assertEqual(slugify_all(["<a@b.c>"]), ["abc"])
+
+    def test_div_still_stripped_and_code_span_literal(self):
+        self.assertEqual(plain_text("<div>x</div>"), "x")
+        self.assertEqual(plain_text("`<span>` <http://x.io>"), "<span> http://x.io")
+
+    def test_autolink_heading_stays_in_toc(self):
+        self.assertEqual(
+            render_toc("## <http://example.com>\n"),
+            "- [http://example.com](#httpexamplecom)\n",
+        )
+
     def test_slug_keep_set(self):
         self.assertEqual(github_slug("a\u2460 b\u00b2 c\u2014d $e +f"), "a\u2460-b\u00b2-cd-e-f")
 
@@ -105,6 +132,12 @@ class RenderTests(unittest.TestCase):
     def test_duplicate_numbering_counts_excluded_levels(self):
         text = "# A\n## A\n"
         self.assertEqual(render_toc(text), "- [A](#a-1)\n")
+
+    def test_duplicate_suffix_counts_depth_filtered_headings(self):
+        self.assertEqual(
+            render_toc("## A\n### A\n## A\n", max_level=2),
+            "- [A](#a)\n- [A](#a-2)\n",
+        )
 
     def test_default_depth_h2_to_h4(self):
         text = "# T\n## B\n#### D\n##### E\n"
